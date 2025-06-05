@@ -247,14 +247,14 @@ class FollowSerializer(serializers.ModelSerializer):
         request = self.context.get('request')
         user = request.user
         author_id = data.get('author')
-        
+
         if author_id == user.id:
             raise serializers.ValidationError(
                 {'author': 'Нельзя подписаться на самого себя.'}
             )
         if user.follower.filter(author=author_id).exists():
             raise serializers.ValidationError(
-                {'author': 'Вы уже подписаны на этого пользователя.'}
+                {'author': 'Вы уже подписаны на данного пользователя.'}
             )
 
         return data    

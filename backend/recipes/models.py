@@ -1,7 +1,10 @@
 from django.db import models
-from django.core.validators import MinValueValidator
+from django.core.validators import MinValueValidator, MaxValueValidator
 from users.models import CustomUser as User
 from shortuuid import uuid
+
+MIN_COOKING_TIME = 1
+MAX_COOKING_TIME = 32000
 
 
 class Ingredient(models.Model):
@@ -51,9 +54,12 @@ class Recipe(models.Model):
         related_name='recipes',
         through='RecipeIngredient'
     )
-    cooking_time = models.PositiveIntegerField(
+    cooking_time = models.PositiveSmallIntegerField(
         verbose_name='Время приготовления (в минутах)',
-        validators=[MinValueValidator(1)]
+        validators=[
+            MinValueValidator(MIN_COOKING_TIME),
+            MaxValueValidator(MAX_COOKING_TIME)
+    ]
     )
     pub_date = models.DateTimeField(
         verbose_name='Дата публикации',
@@ -89,9 +95,12 @@ class RecipeIngredient(models.Model):
         related_name='ingredient_recipes',
         verbose_name='Ингредиент'
     )
-    amount = models.PositiveIntegerField(
+    amount = models.PositiveSmallIntegerField(
         verbose_name='Количество ингредиентов',
-        validators=[MinValueValidator(1)],
+                validators=[
+            MinValueValidator(MIN_COOKING_TIME),
+            MaxValueValidator(MAX_COOKING_TIME)
+    ],
         help_text='Укажите количество ингредиентов (минимум 1)'
     )
 

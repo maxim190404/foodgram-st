@@ -13,11 +13,8 @@ from .serializers import (
     ShoppingCartSerializer, FollowSerializer, CustomUserSerializer,
     CustomUserCreateSerializer, SetPasswordSerializer,
     UserWithRecipesSerializer, SetAvatarSerializer,
-    RecipeCreateResponseSerializer, RecipeUpdateSerializer
+    RecipeCreateUpdateSerializer
 )
-from django.core.files.base import ContentFile
-import base64
-import uuid
 from django.http import HttpResponse
 from .pagination import StandardResultsSetPagination
 from django.db.models import Count
@@ -47,33 +44,12 @@ class UserViewSet(DjoserUserViewSet):
             permission_classes=[IsAuthenticated], url_path='me/avatar')
     def avatar(self, request):
         user = request.user
-
         if request.method == 'PUT':
-            if 'avatar' not in request.data:
-                return Response(
-                    {'error': 'Необходимо передать изображение в поле avatar'},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-
-            image_data = request.data['avatar']
-            if (isinstance(image_data, str)
-                    and image_data.startswith('data:image')):
-                format, imgstr = image_data.split(';base64,')
-                ext = format.split('/')[-1]
-                mime_type = format.replace('data:', '')
-                data = ContentFile(
-                    base64.b64decode(imgstr),
-                    name=f'{uuid.uuid4()}.{ext}'
-                )
-                user.avatar = data
-                user.save()
-                serializer = SetAvatarSerializer(
-                    user, context={'mime_type': mime_type})
-                return Response(serializer.data, status=status.HTTP_200_OK)
-            return Response(
-                {'error': 'Некорректный формат изображения'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
+            serializer = SetAvatarSerializer(user, data=request.data, partial=True)
+            serializer.is_valid(raise_exception=True)
+            user.avatar = serializer.validated_data['avatar']
+            user.save()
+            return Response(serializer.data, status=status.HTTP_200_OK)
         elif request.method == 'DELETE':
             if not user.avatar:
                 return Response(
@@ -91,30 +67,21 @@ class UserViewSet(DjoserUserViewSet):
         user = request.user
         author = get_object_or_404(User, id=id)
         if request.method == 'POST':
-            if user == author:
-                return Response(
-                    {'errors': 'Нельзя подписаться на самого себя'},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-            if Follow.objects.filter(user=user, author=author).exists():
-                return Response(
-                    {'errors': 'Вы уже подписаны на этого автора'},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-            follow = Follow.objects.create(user=user, author=author)
             serializer = FollowSerializer(
-                follow,
+                data={'user': user.id, 'author': author.id},
                 context={'request': request}
             )
+            serializer.is_valid(raise_exception=True)
+            follow = serializer.save()
+            serializer = FollowSerializer(follow, context={'request': request})
             return Response(serializer.data, status=status.HTTP_201_CREATED)
         elif request.method == 'DELETE':
-            if not Follow.objects.filter(user=user, author=author).exists():
+            if not user.follower.filter(author=author).exists():
                 return Response(
                     {"detail": "Подписка не существует."},
                     status=status.HTTP_400_BAD_REQUEST
                 )
-            follow = Follow.objects.get(user=user, author=author)
-            follow.delete()
+            user.follower.get(author=author).delete()
             return Response(status=status.HTTP_204_NO_CONTENT)
 
     @action(detail=False,
@@ -185,84 +152,33 @@ class RecipeViewSet(viewsets.ModelViewSet):
     filter_backends = [DjangoFilterBackend]
     filterset_class = RecipeFilter
 
-    def get_queryset(self):
-        queryset = super().get_queryset()
-        if not self.request.user.is_authenticated:
-            return queryset
-        return queryset
-
     def get_serializer_class(self):
-        if self.action in ['update', 'partial_update']:
-            return RecipeUpdateSerializer
+        if self.action in ['create', 'update', 'partial_update']:
+            return RecipeCreateUpdateSerializer
         return RecipeSerializer
 
     def perform_create(self, serializer):
-        if ('image' in serializer.validated_data
-                and isinstance(serializer.validated_data['image'], str)):
-            image_data = serializer.validated_data['image']
-            if image_data.startswith('data:image'):
-                format, imgstr = image_data.split(';base64,')
-                ext = format.split('/')[-1]
-
-                data = ContentFile(
-                    base64.b64decode(imgstr),
-                    name=f'{uuid.uuid4()}.{ext}'
-                )
-                serializer.validated_data['image'] = data
-
-        serializer.save(author=self.request.user)
+        serializer.save()
 
     def perform_update(self, serializer):
-        if ('image' in serializer.validated_data
-                and isinstance(serializer.validated_data['image'], str)):
-            image_data = serializer.validated_data['image']
-            if image_data.startswith('data:image'):
-                format, imgstr = image_data.split(';base64,')
-                ext = format.split('/')[-1]
-
-                data = ContentFile(
-                    base64.b64decode(imgstr),
-                    name=f'{uuid.uuid4()}.{ext}'
-                )
-                serializer.validated_data['image'] = data
-
         serializer.save()
 
     def create(self, request, *args, **kwargs):
-        if not request.user.is_authenticated:
-            return Response(
-                {"detail": "Аутентификация требуется для создания рецепта."},
-                status=status.HTTP_401_UNAUTHORIZED
-            )
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         self.perform_create(serializer)
-        response_serializer = RecipeCreateResponseSerializer(
-            serializer.instance,
-            context={'request': request}
-        )
-        return Response(response_serializer.data,
-                        status=status.HTTP_201_CREATED)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
 
     def update(self, request, *args, **kwargs):
         instance = self.get_object()
-        serializer = self.get_serializer(instance,
-                                         data=request.data, partial=True)
+        serializer = self.get_serializer(instance, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
         self.perform_update(serializer)
-        return Response(RecipeCreateResponseSerializer(
-            instance, context={'request': request}).data)
-
-        response_serializer = RecipeCreateResponseSerializer(
-            instance,
-            context={'request': request}
-        )
-        return Response(response_serializer.data)
+        return Response(serializer.data)
 
     def retrieve(self, request, *args, **kwargs):
         instance = self.get_object()
-        serializer = RecipeCreateResponseSerializer(
-            instance, context={'request': request})
+        serializer = self.get_serializer(instance)
         return Response(serializer.data)
 
     @action(detail=True,
@@ -272,13 +188,13 @@ class RecipeViewSet(viewsets.ModelViewSet):
         recipe = get_object_or_404(Recipe, id=pk)
 
         if request.method == 'POST':
-            if Favorite.objects.filter(user=request.user,
+            if request.user.favorites.filter(
                                        recipe=recipe).exists():
                 return Response(
                     {'errors': 'Рецепт уже в избранном'},
                     status=status.HTTP_400_BAD_REQUEST
                 )
-            favorite = Favorite.objects.create(
+            favorite = Favorite.objects.create( 
                 user=request.user, recipe=recipe)
             serializer = FavoriteSerializer(
                 favorite,
@@ -287,8 +203,7 @@ class RecipeViewSet(viewsets.ModelViewSet):
             return Response(serializer.data, status=status.HTTP_201_CREATED)
 
         elif request.method == 'DELETE':
-            favorite = Favorite.objects.filter(
-                user=request.user, recipe=recipe).first()
+            favorite = request.user.favorites.filter(recipe=recipe).first()
             if not favorite:
                 return Response(
                     {'errors': 'Рецепт не находится в избранном.'},
@@ -303,7 +218,7 @@ class RecipeViewSet(viewsets.ModelViewSet):
         recipe = get_object_or_404(Recipe, id=pk)
 
         if request.method == 'POST':
-            if ShoppingCart.objects.filter(user=request.user,
+            if request.user.shopping_cart.filter(
                                            recipe=recipe).exists():
                 return Response(
                     {'errors': 'Рецепт уже в списке покупок'},
@@ -316,8 +231,7 @@ class RecipeViewSet(viewsets.ModelViewSet):
             return Response(serializer.data, status=status.HTTP_201_CREATED)
 
         elif request.method == 'DELETE':
-            cart_item = ShoppingCart.objects.filter(
-                user=request.user, recipe=recipe).first()
+            cart_item = request.user.shopping_cart.filter(recipe=recipe).first()
             if not cart_item:
                 return Response(
                     {'errors': 'Рецепт не находится в корзине покупок.'},
@@ -329,7 +243,7 @@ class RecipeViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['get'],
             permission_classes=[IsAuthenticated])
     def download_shopping_cart(self, request):
-        shopping_cart = ShoppingCart.objects.filter(user=request.user)
+        shopping_cart = request.user.shopping_cart.all()
         if not shopping_cart.exists():
             return Response({'error': 'Корзина покупок пуста'},
                             status=status.HTTP_400_BAD_REQUEST)

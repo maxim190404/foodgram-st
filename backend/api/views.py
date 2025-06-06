@@ -5,7 +5,6 @@ from rest_framework.response import Response
 from django.shortcuts import get_object_or_404
 from django.contrib.auth import get_user_model
 from djoser.views import UserViewSet as DjoserUserViewSet
-from users.models import Follow
 from recipes.models import (Ingredient, Recipe, ShoppingCart, Favorite,
                             RecipeIngredient)
 from .serializers import (
